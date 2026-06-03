@@ -787,8 +787,11 @@ export default function App() {
                           (pre   != null && price ? ((pre   - price) / price) * 100 : null);
       const afterChgPct = afterChgPctApi != null ? afterChgPctApi :
                           (after != null && price ? ((after - price) / price) * 100 : null);
-      const sessPrice = effectivePrice ?? price;
-      const dayAmt = sessPrice != null && prev != null ? (sessPrice - prev) * qty : null;
+      // 오늘 손익 기준: 프리/애프터는 직전 정규종가(price) 대비, 정규는 전일종가(prev) 대비
+      const dayAmt =
+        (session === "pre" || session === "after")
+          ? (effectivePrice != null && price != null ? (effectivePrice - price) * qty : null)
+          : (price != null && prev != null ? (price - prev) * qty : null);
       map[t] = {
         price, prev, chgPct, pre, after, effectivePrice,
         preChgPct, afterChgPct,
@@ -973,7 +976,7 @@ export default function App() {
                     <div style={{ fontSize:12, opacity:.6 }}>+ 버튼으로 추가</div>
                   </div>
                 ) : tks.map((t) => {
-                  const s = statsMap[t], loaded = s?.price != null, pos = s?.pnl == null ? null : s.pnl >= 0;
+                  const s = statsMap[t], loaded = s?.effectivePrice != null, pos = s?.pnl == null ? null : s.pnl >= 0;
                   return (
                     <div key={t} className="card" onClick={() => openEdit(t)}>
                       <TickerLogo ticker={t} />
@@ -984,14 +987,19 @@ export default function App() {
                       <div className="card-right">
                         {loaded ? (
                           <>
-                            <div className="card-cur mono">{fmtPrice(s.price, currency, CR)}</div>
+                            <div className="card-cur mono">{fmtPrice(s.effectivePrice, currency, CR)}</div>
                             <div className="card-value mono">{fmtVal(s.cur, currency, CR)}</div>
                             <div className={`card-pnl ${pos === true ? "pos" : pos === false ? "neg" : "neu"}`}>
                               {s.pnl != null ? `${fmtPnl(s.pnl, currency, CR)} (${sgn(s.pnlPct)}${s.pnlPct?.toFixed(1)}%)` : "—"}
                             </div>
-                            <div className={`card-daychg ${s.chgPct == null ? "neu" : s.chgPct >= 0 ? "pos" : "neg"}`}>
-                              {s.chgPct != null ? `오늘 ${sgn(s.chgPct)}${s.chgPct?.toFixed(2)}%` : ""}
-                            </div>
+                            {(() => {
+                              const dayPct = ms.status === "pre" ? s.preChgPct : ms.status === "after" ? s.afterChgPct : s.chgPct;
+                              return dayPct != null ? (
+                                <div className={`card-daychg ${dayPct >= 0 ? "pos" : "neg"}`}>
+                                  오늘 {sgn(dayPct)}{dayPct.toFixed(2)}%
+                                </div>
+                              ) : null;
+                            })()}
                             {ms.status === "pre"   && s.pre   != null && <span className="ext-badge ext-pre">Pre {sgn(s.preChgPct)}{s.preChgPct?.toFixed(2)}%</span>}
                             {ms.status === "after" && s.after != null && <span className="ext-badge ext-after">After {sgn(s.afterChgPct)}{s.afterChgPct?.toFixed(2)}%</span>}
                           </>
@@ -1163,7 +1171,9 @@ export default function App() {
                   <div className="sec-t">내 종목 오늘</div>
                   <div className="mybars">
                     {tks.map((t) => {
-                      const s = statsMap[t], chg = s?.chgPct ?? null, pos = (chg ?? 0) >= 0;
+                      const s = statsMap[t];
+                      const chg = ms.status === "pre" ? (s?.preChgPct ?? null) : ms.status === "after" ? (s?.afterChgPct ?? null) : (s?.chgPct ?? null);
+                      const pos = (chg ?? 0) >= 0;
                       const h = Math.max(4, Math.min(72, Math.abs(chg ?? 0) * 18 + 6));
                       return (
                         <div key={t} className="mbw">
