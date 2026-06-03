@@ -771,19 +771,28 @@ export default function App() {
       const price = safeNum(q?.price), prev = safeNum(q?.prev_close), chgPct = safeNum(q?.change_pct);
       const pre = safeNum(q?.pre_market), after = safeNum(q?.after_market);
       const avg = calcAvg(h.lots), qty = h.lots.reduce((s, l) => s + l.qty, 0);
-      const cost = avg * qty, cur = price != null ? price * qty : null;
+      const cost = avg * qty;
+      // 세션별 실효가: 프리장→pre, 애프터→after, 나머지→price
+      const effectivePrice =
+        session === "pre"   && pre   != null ? pre   :
+        session === "after" && after != null ? after :
+        price;
+      const cur = effectivePrice != null ? effectivePrice * qty : null;
       const pnl = cur != null ? cur - cost : null;
+      const preChgPct   = pre   != null && prev ? ((pre   - prev) / prev) * 100 : null;
+      const afterChgPct = after != null && prev ? ((after - prev) / prev) * 100 : null;
+      const sessPrice = effectivePrice ?? price;
+      const dayAmt = sessPrice != null && prev != null ? (sessPrice - prev) * qty : null;
       map[t] = {
-        price, prev, chgPct, pre, after,
-        preChgPct: pre != null && prev ? ((pre - prev) / prev) * 100 : null,
-        afterChgPct: after != null && prev ? ((after - prev) / prev) * 100 : null,
+        price, prev, chgPct, pre, after, effectivePrice,
+        preChgPct, afterChgPct,
         avg, qty, cost, cur, pnl,
         pnlPct: cost > 0 && pnl != null ? (pnl / cost) * 100 : null,
-        dayAmt: price != null && prev != null ? (price - prev) * qty : null,
+        dayAmt,
       };
     });
     return map;
-  }, [holdings, quotes]);
+  }, [holdings, quotes, session]);
 
   const tks = useMemo(() => Object.keys(holdings), [holdings]);
   const tot = useMemo(() => {
