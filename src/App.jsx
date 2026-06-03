@@ -770,6 +770,9 @@ export default function App() {
       const q = quotes[t];
       const price = safeNum(q?.price), prev = safeNum(q?.prev_close), chgPct = safeNum(q?.change_pct);
       const pre = safeNum(q?.pre_market), after = safeNum(q?.after_market);
+      // API에서 Yahoo 공식 % 사용 (없으면 직전 정규 종가 기준으로 fallback)
+      const preChgPctApi   = safeNum(q?.pre_chg_pct);
+      const afterChgPctApi = safeNum(q?.after_chg_pct);
       const avg = calcAvg(h.lots), qty = h.lots.reduce((s, l) => s + l.qty, 0);
       const cost = avg * qty;
       // 세션별 실효가: 프리장→pre, 애프터→after, 나머지→price
@@ -779,8 +782,11 @@ export default function App() {
         price;
       const cur = effectivePrice != null ? effectivePrice * qty : null;
       const pnl = cur != null ? cur - cost : null;
-      const preChgPct   = pre   != null && prev ? ((pre   - prev) / prev) * 100 : null;
-      const afterChgPct = after != null && prev ? ((after - prev) / prev) * 100 : null;
+      // Yahoo 공식 % 우선, 없으면 직전 정규 종가(price) 기준 직접 계산
+      const preChgPct   = preChgPctApi   != null ? preChgPctApi   :
+                          (pre   != null && price ? ((pre   - price) / price) * 100 : null);
+      const afterChgPct = afterChgPctApi != null ? afterChgPctApi :
+                          (after != null && price ? ((after - price) / price) * 100 : null);
       const sessPrice = effectivePrice ?? price;
       const dayAmt = sessPrice != null && prev != null ? (sessPrice - prev) * qty : null;
       map[t] = {
