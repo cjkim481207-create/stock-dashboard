@@ -154,6 +154,8 @@ const css = `
   }
   .pnl-badge.pos { background:rgba(16,185,129,0.3); }
   .pnl-badge.neg { background:rgba(239,68,68,0.3); }
+  /* 전역 .pos/.neg 가 흰 글씨를 덮어써서 그라디언트 헤더에서 대비가 깨지던 문제 */
+  .pnl-badge.pos, .pnl-badge.neg { color:#fff; }
   .ph-day { font-size:13px; font-weight:600; color:rgba(255,255,255,0.75); }
 
   /* ── 마켓/환율 카드 행 ── */
@@ -189,6 +191,25 @@ const css = `
   .fx-rate { font-size:18px; font-weight:800; letter-spacing:-0.03em; margin-top:4px; font-family:var(--mono); }
   .fx-chg { font-size:12px; font-weight:700; }
   .fx-age { font-size:10px; color:var(--muted2); font-weight:500; margin-top:3px; }
+  .fx-avg { font-size:10px; font-weight:600; color:var(--muted); margin-top:4px; }
+  .fx-avg b { font-weight:800; color:var(--text); }
+  .fx-tag { display:inline-block; margin-left:5px; font-size:9.5px; font-weight:700; padding:1px 5px; border-radius:5px;
+            background:var(--surface2); color:var(--muted2); vertical-align:1px; }
+  .fx-tag.warn { background:color-mix(in srgb, var(--amber) 18%, transparent); color:var(--amber); }
+
+  /* 원화 손익 분해 카드 */
+  .fxb { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px; margin:0 16px 12px; }
+  .fxb-title { font-size:10px; font-weight:700; color:var(--muted); letter-spacing:0.04em; text-transform:uppercase; margin-bottom:10px; }
+  .fxb-row { display:flex; justify-content:space-between; align-items:baseline; gap:10px; font-size:12.5px; padding:3px 0; }
+  .fxb-row > span:first-child { color:var(--muted); font-weight:600; flex-shrink:0; }
+  .fxb-row > span:last-child { font-weight:700; text-align:right; }
+  .fxb-row em { font-style:normal; font-size:10.5px; font-weight:600; color:var(--muted2); margin-left:5px; }
+  .fxb-sep { height:1px; background:var(--border); margin:8px 0; }
+  .fxb-total { font-size:14px; }
+  .fxb-total > span:first-child { color:var(--text); font-weight:700; }
+  .pnl-split { display:flex; gap:12px; flex-wrap:wrap; margin-top:8px; font-size:10.5px; font-weight:600; color:var(--muted); }
+  .pnl-split b { font-weight:800; }
+
   .fx-live-dot { display:inline-block; width:5px; height:5px; border-radius:50%; background:var(--green); margin-right:3px; animation:pulse 1.5s ease-in-out infinite; }
 
   /* ── 소스 표시 ── */
@@ -264,6 +285,11 @@ const css = `
   .mb-p { background:var(--accent); color:white; }
   .mb-s { background:var(--surface2); color:var(--muted); }
   .mb-d { background:color-mix(in srgb, var(--up) 12%, transparent); color:var(--up); }
+  .fx-input-row { display:flex; gap:8px; align-items:stretch; }
+  .fx-input-row .fi { flex:1; }
+  .fx-apply { flex-shrink:0; padding:0 14px; border-radius:var(--radius-sm); border:1px solid var(--border2);
+              background:var(--surface2); color:var(--text2); font-size:12px; font-weight:700; cursor:pointer; }
+  .fx-apply:disabled { opacity:.4; cursor:default; }
   .avg-box { background:var(--surface2); border-radius:var(--radius-sm); padding:14px 16px; margin-top:10px; }
   .avg-row { display:flex; justify-content:space-between; font-size:13px; padding:3px 0; }
   .avg-row span:first-child { color:var(--muted); font-weight:500; }
@@ -473,6 +499,20 @@ const calcAvg = lots => {
   const q = lots.reduce((s, l) => s + l.qty, 0);
   return q > 0 ? lots.reduce((s, l) => s + l.qty * l.price, 0) / q : 0;
 };
+
+/* ── 매입환율(원/달러) ──
+   로트별 l.fx 에 매수 시점 환율을 저장. 값이 없는 구(舊) 로트는
+   현재환율로 간주해 환차손익 0 으로 처리(사용자가 입력하면 즉시 반영). */
+const validFx = v => (typeof v === "number" && isFinite(v) && v > 0 ? v : null);
+const lotFx = (l, fallback) => validFx(l.fx) ?? fallback;
+const hasFx = lots => lots.some(l => validFx(l.fx) != null);
+const calcCostKrw = (lots, fallback) =>
+  lots.reduce((s, l) => s + l.qty * l.price * lotFx(l, fallback), 0);
+/* 원화 매입원금 / 달러 매입원금 = 평균 매입환율 */
+const calcAvgFx = (lots, fallback) => {
+  const c = lots.reduce((s, l) => s + l.qty * l.price, 0);
+  return c > 0 ? calcCostKrw(lots, fallback) / c : fallback;
+};
 const sgn = n => (n > 0 ? "+" : "");
 const safeNum = n => (typeof n === "number" && isFinite(n) ? n : null);
 
@@ -492,6 +532,24 @@ function fmtPrice(n, cur, rate) {
   if (cur === "KRW") return "₩" + Math.round(n * rate).toLocaleString("ko-KR");
   return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
+/* 원화는 환산이 아니라 실제 원화 금액(매입환율 반영)을 그대로 출력 */
+function fmtKrwVal(n) {
+  if (n == null) return "—";
+  return Math.round(Math.abs(n)).toLocaleString("ko-KR") + "원";
+}
+function fmtKrwPnl(n) {
+  if (n == null) return "—";
+  return (n >= 0 ? "+" : "-") + Math.round(Math.abs(n)).toLocaleString("ko-KR") + "원";
+}
+/* usd = 달러 금액, krw = 매입환율이 반영된 실제 원화 금액 */
+function fmtValX(usd, krw, cur) {
+  return cur === "KRW" ? fmtKrwVal(krw) : fmtVal(usd, "USD", 1);
+}
+function fmtPnlX(usd, krw, cur) {
+  return cur === "KRW" ? fmtKrwPnl(krw) : fmtPnl(usd, "USD", 1);
+}
+const fmtRate = n => (n == null ? "—" : n.toLocaleString("ko-KR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
 
 function sessionFromET(min, dow) {
   if (dow === 0 || dow === 6) return "closed";
@@ -599,6 +657,46 @@ function secColor(pct) {
   return { bg: "color-mix(in srgb, var(--up) 90%, black 10%)", tx: "#fff" };
 }
 
+/* ── 원화 손익 = 주가손익 + 환차손익 분해 카드 ── */
+function FxBreakdown({ tot, rate }) {
+  if (!tot.anyFx || tot.tc <= 0 || tot.avgFx == null) return null;
+  const diff = rate - tot.avgFx;
+  const diffPct = (diff / tot.avgFx) * 100;
+  return (
+    <div className="fxb">
+      <div className="fxb-title">원화 손익 분해</div>
+      <div className="fxb-row">
+        <span>매입원금</span>
+        <span className="mono">{fmtKrwVal(tot.tcK)} <em>@{fmtRate(tot.avgFx)}</em></span>
+      </div>
+      <div className="fxb-row">
+        <span>평가금액</span>
+        <span className="mono">{fmtKrwVal(tot.tvK)} <em>@{fmtRate(rate)}</em></span>
+      </div>
+      <div className="fxb-sep" />
+      <div className="fxb-row">
+        <span>주가 손익</span>
+        <span className={`mono ${tot.pnl >= 0 ? "pos" : "neg"}`}>
+          {fmtKrwPnl(tot.stockPnlK)} <em>{fmtPnl(tot.pnl, "USD", 1)}{tot.pct != null ? ` · ${sgn(tot.pct)}${tot.pct.toFixed(2)}%` : ""}</em>
+        </span>
+      </div>
+      <div className="fxb-row">
+        <span>환차 손익</span>
+        <span className={`mono ${tot.fxPnlK >= 0 ? "pos" : "neg"}`}>
+          {fmtKrwPnl(tot.fxPnlK)} <em>{sgn(diff)}{Math.round(diff).toLocaleString("ko-KR")}원 · {sgn(diffPct)}{diffPct.toFixed(2)}%</em>
+        </span>
+      </div>
+      <div className="fxb-sep" />
+      <div className="fxb-row fxb-total">
+        <span>총 손익 (원화)</span>
+        <span className={`mono ${tot.pnlK >= 0 ? "pos" : "neg"}`}>
+          {fmtKrwPnl(tot.pnlK)}{tot.pctK != null ? ` · ${sgn(tot.pctK)}${tot.pctK.toFixed(2)}%` : ""}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 const Icon = {
   refresh: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>,
   grid: <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>,
@@ -625,7 +723,7 @@ export default function App() {
   const [mkt, setMkt] = useState(null);
   const [binance, setBinance] = useState({});
   const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({ ticker: "", qty: "", price: "" });
+  const [form, setForm] = useState({ ticker: "", qty: "", price: "", fx: "" });
   const [lots, setLots] = useState([]);
   const [ms, setMs] = useState(getMarketStatus());
   const [session, setSession] = useState("closed");
@@ -763,7 +861,14 @@ export default function App() {
   }, [page, session, refreshMarket]);
 
   /* ── 파생 데이터 ── */
+  /* 전일 환율: 오늘 등락률에서 역산 (원화 기준 "오늘 손익" 계산용) */
+  const prevFxRate = useMemo(
+    () => (fxData.chg ? fxData.rate / (1 + fxData.chg / 100) : fxData.rate),
+    [fxData.rate, fxData.chg]
+  );
+
   const statsMap = useMemo(() => {
+    const rate = fxData.rate, prevRate = prevFxRate;
     const map = {};
     Object.keys(holdings).forEach((t) => {
       const h = holdings[t]; if (!h) return;
@@ -792,26 +897,57 @@ export default function App() {
         (session === "pre" || session === "after")
           ? (effectivePrice != null && price != null ? (effectivePrice - price) * qty : null)
           : (price != null && prev != null ? (price - prev) * qty : null);
+      /* ── 환율 반영 (원화 기준) ──
+         매입원금은 로트별 매입환율로, 평가금은 현재환율로 환산한다.
+         pnlKrw = 주가손익×현재환율 + 매입원금×(현재환율 − 평균매입환율) */
+      const costKrw = calcCostKrw(h.lots, rate);
+      const avgFx = cost > 0 ? costKrw / cost : rate;
+      const curKrw = cur != null ? cur * rate : null;
+      const pnlKrw = curKrw != null ? curKrw - costKrw : null;
+      const fxPnlKrw = cost * (rate - avgFx);                 // 환차손익
+      const stockPnlKrw = pnl != null ? pnl * rate : null;    // 주가손익(원화 환산)
+      // 오늘 손익(원화) = 오늘 평가금(원) − 어제 평가금(어제 환율)
+      const dayAmtKrw =
+        dayAmt != null && cur != null ? cur * rate - (cur - dayAmt) * prevRate : null;
+
       map[t] = {
         price, prev, chgPct, pre, after, effectivePrice,
         preChgPct, afterChgPct,
         avg, qty, cost, cur, pnl,
         pnlPct: cost > 0 && pnl != null ? (pnl / cost) * 100 : null,
         dayAmt,
+        costKrw, avgFx, curKrw, pnlKrw,
+        pnlKrwPct: costKrw > 0 && pnlKrw != null ? (pnlKrw / costKrw) * 100 : null,
+        fxPnlKrw, stockPnlKrw, dayAmtKrw,
+        fxSet: hasFx(h.lots),
       };
     });
     return map;
-  }, [holdings, quotes, session]);
+  }, [holdings, quotes, session, fxData.rate, prevFxRate]);
 
   const tks = useMemo(() => Object.keys(holdings), [holdings]);
   const tot = useMemo(() => {
     let tv = 0, tc = 0, dayPnl = 0;
+    let tvK = 0, tcK = 0, dayPnlK = 0, fxPnlK = 0, stockPnlK = 0;
+    let anyFx = false;
     tks.forEach((t) => {
       const s = statsMap[t];
-      if (s?.cur != null) { tv += s.cur; tc += s.cost; }
+      if (s?.cur != null) {
+        tv += s.cur; tc += s.cost;
+        tvK += s.curKrw ?? 0; tcK += s.costKrw ?? 0;
+        fxPnlK += s.fxPnlKrw ?? 0; stockPnlK += s.stockPnlKrw ?? 0;
+      }
       if (s?.dayAmt != null) dayPnl += s.dayAmt;
+      if (s?.dayAmtKrw != null) dayPnlK += s.dayAmtKrw;
+      if (s?.fxSet) anyFx = true;
     });
-    return { tv, tc, pnl: tv - tc, pct: tc > 0 ? ((tv - tc) / tc) * 100 : null, dayPnl };
+    return {
+      tv, tc, pnl: tv - tc, pct: tc > 0 ? ((tv - tc) / tc) * 100 : null, dayPnl,
+      tvK, tcK, pnlK: tvK - tcK, pctK: tcK > 0 ? ((tvK - tcK) / tcK) * 100 : null,
+      dayPnlK, fxPnlK, stockPnlK,
+      avgFx: tc > 0 ? tcK / tc : null,
+      anyFx,
+    };
   }, [tks, statsMap]);
 
   const totalVal = useMemo(() => tks.reduce((s, t) => s + (statsMap[t]?.cur ?? 0), 0), [tks, statsMap]);
@@ -826,41 +962,59 @@ export default function App() {
   }, [tks, statsMap]);
 
   const preview = useMemo(() => {
-    const q = parseFloat(form.qty), p = parseFloat(form.price);
+    const q = parseFloat(form.qty), p = parseFloat(form.price), f = parseFloat(form.fx);
     const pl = [...lots];
-    if (q > 0 && p > 0) pl.push({ qty: q, price: p });
-    return { lots: pl, avg: pl.length ? calcAvg(pl) : null, qty: pl.reduce((s, l) => s + l.qty, 0) };
-  }, [lots, form.qty, form.price]);
+    if (q > 0 && p > 0) pl.push({ qty: q, price: p, fx: f > 0 ? f : undefined });
+    const rate = fxData.rate;
+    return {
+      lots: pl,
+      avg: pl.length ? calcAvg(pl) : null,
+      qty: pl.reduce((s, l) => s + l.qty, 0),
+      costKrw: calcCostKrw(pl, rate),
+      avgFx: pl.length ? calcAvgFx(pl, rate) : null,
+    };
+  }, [lots, form.qty, form.price, form.fx, fxData.rate]);
 
   const CR = currency === "KRW" ? fxData.rate : 1;
   const isEdit = modal && modal !== "add";
 
   /* ── 핸들러 ── */
-  const openAdd = () => { setForm({ ticker: "", qty: "", price: "" }); setLots([]); setModal("add"); };
-  const openEdit = (t) => { setLots(holdings[t].lots.map((l, i) => ({ ...l, id: i }))); setForm({ ticker: t, qty: "", price: "" }); setModal(t); };
-  const closeModal = () => { setModal(null); setLots([]); setForm({ ticker: "", qty: "", price: "" }); };
+  const emptyForm = { ticker: "", qty: "", price: "", fx: "" };
+  /* 입력한 로트 하나 만들기 — 매입환율은 비워두면 현재환율로 저장 */
+  const buildLot = () => {
+    const q = parseFloat(form.qty), p = parseFloat(form.price), f = parseFloat(form.fx);
+    if (!(q > 0 && p > 0)) return null;
+    return { qty: q, price: p, fx: f > 0 ? f : fxData.rate, id: Date.now() };
+  };
+  const openAdd = () => { setForm(emptyForm); setLots([]); setModal("add"); };
+  const openEdit = (t) => { setLots(holdings[t].lots.map((l, i) => ({ ...l, id: l.id ?? i }))); setForm({ ...emptyForm, ticker: t }); setModal(t); };
+  const closeModal = () => { setModal(null); setLots([]); setForm(emptyForm); };
   const doSave = () => {
     const ticker = form.ticker.trim().toUpperCase();
     if (!ticker) return;
     const fl = [...lots];
-    const q = parseFloat(form.qty), p = parseFloat(form.price);
-    if (q > 0 && p > 0) fl.push({ qty: q, price: p, id: Date.now() });
+    const nl = buildLot(); if (nl) fl.push(nl);
     if (!fl.length) return;
     setHoldings((h) => ({ ...h, [ticker]: { name: ticker, lots: fl } }));
     closeModal();
   };
   const doSaveEdit = () => {
     const fl = [...lots];
-    const q = parseFloat(form.qty), p = parseFloat(form.price);
-    if (q > 0 && p > 0) fl.push({ qty: q, price: p, id: Date.now() });
+    const nl = buildLot(); if (nl) fl.push(nl);
     if (!fl.length) { doDel(modal); return; }
     setHoldings((h) => ({ ...h, [modal]: { ...h[modal], lots: fl } }));
     closeModal();
   };
   const doDel = (t) => { setHoldings((h) => { const n = { ...h }; delete n[t]; return n; }); closeModal(); };
   const addLot = () => {
-    const q = parseFloat(form.qty), p = parseFloat(form.price);
-    if (q > 0 && p > 0) { setLots((l) => [...l, { qty: q, price: p, id: Date.now() }]); setForm((f) => ({ ...f, qty: "", price: "" })); }
+    const nl = buildLot();
+    if (nl) { setLots((l) => [...l, nl]); setForm((f) => ({ ...f, qty: "", price: "" })); }
+  };
+  /* 입력칸의 환율을 기존 로트 전체에 일괄 적용 (환율 미입력 종목 보정용) */
+  const applyFxToAll = () => {
+    const f = parseFloat(form.fx);
+    if (!(f > 0)) return;
+    setLots((ls) => ls.map((l) => ({ ...l, fx: f })));
   };
 
   /* ── 공통 컨트롤 ── */
@@ -908,15 +1062,20 @@ export default function App() {
               </div>
               <div className="ph-total">
                 <div className="ph-total-label">총 자산</div>
-                <div className="ph-total-value mono">{tot.tv > 0 ? fmtVal(tot.tv, currency, CR) : "—"}</div>
+                <div className="ph-total-value mono">{tot.tv > 0 ? fmtValX(tot.tv, tot.tvK, currency) : "—"}</div>
                 <div className="ph-total-sub">
-                  {tot.pnl !== 0 && tot.pct != null && (
-                    <span className={`pnl-badge ${tot.pnl > 0 ? "pos" : "neg"}`}>
-                      {fmtPnl(tot.pnl, currency, CR)} · {sgn(tot.pct)}{tot.pct?.toFixed(2)}%
-                    </span>
-                  )}
+                  {(() => {
+                    const pnl = currency === "KRW" ? tot.pnlK : tot.pnl;
+                    const pct = currency === "KRW" ? tot.pctK : tot.pct;
+                    if (pnl === 0 || pct == null) return null;
+                    return (
+                      <span className={`pnl-badge ${pnl > 0 ? "pos" : "neg"}`}>
+                        {fmtPnlX(tot.pnl, tot.pnlK, currency)} · {sgn(pct)}{pct.toFixed(2)}%
+                      </span>
+                    );
+                  })()}
                   {tot.dayPnl !== 0 && (
-                    <span className="ph-day">오늘 {sgn(tot.dayPnl)}{fmtPnl(tot.dayPnl, currency, CR)}</span>
+                    <span className="ph-day">오늘 {fmtPnlX(tot.dayPnl, tot.dayPnlK, currency)}</span>
                   )}
                 </div>
               </div>
@@ -938,9 +1097,21 @@ export default function App() {
                     <div className={`fx-rate mono`}>₩{fxData.rate.toLocaleString("ko-KR", { maximumFractionDigits: 1 })}</div>
                   </div>
                   <div className={`fx-chg ${fxData.chg >= 0 ? "pos" : "neg"}`}>
-                    {sgn(fxData.chg)}{Math.abs(fxData.chg).toFixed(2)}%
+                    {sgn(fxData.chg)}{fxData.chg.toFixed(2)}%
                   </div>
                 </div>
+                {tot.avgFx != null && tot.anyFx && (() => {
+                  const diff = fxData.rate - tot.avgFx;
+                  const pct = (diff / tot.avgFx) * 100;
+                  return (
+                    <div className="fx-avg">
+                      매입 <b className="mono">₩{fmtRate(tot.avgFx)}</b>
+                      <span className={diff >= 0 ? "pos" : "neg"}>
+                        {" "}{sgn(diff)}{Math.round(diff).toLocaleString("ko-KR")}원 ({sgn(pct)}{pct.toFixed(2)}%)
+                      </span>
+                    </div>
+                  );
+                })()}
                 <div className="fx-age"><span className="fx-live-dot" />{fxAgeStr || "로딩중"}</div>
               </div>
             </div>
@@ -976,22 +1147,35 @@ export default function App() {
                     <div style={{ fontSize:12, opacity:.6 }}>+ 버튼으로 추가</div>
                   </div>
                 ) : tks.map((t) => {
-                  const s = statsMap[t], loaded = s?.effectivePrice != null, pos = s?.pnl == null ? null : s.pnl >= 0;
+                  const s = statsMap[t], loaded = s?.effectivePrice != null;
+                  const basePnl = currency === "KRW" ? s?.pnlKrw : s?.pnl;
+                  const pos = basePnl == null ? null : basePnl >= 0;
                   return (
                     <div key={t} className="card" onClick={() => openEdit(t)}>
                       <TickerLogo ticker={t} />
                       <div className="card-mid">
                         <div className="card-ticker">{t}</div>
-                        <div className="card-shares">{s?.qty ?? 0}주 · avg {fmtPrice(s?.avg, currency, CR)}</div>
+                        <div className="card-shares">
+                          {s?.qty ?? 0}주 · avg {fmtPrice(s?.avg, currency, s?.avgFx ?? CR)}
+                          {currency === "KRW" && s?.fxSet && <span className="fx-tag">@{fmtRate(s.avgFx)}</span>}
+                          {!s?.fxSet && <span className="fx-tag warn">환율 미입력</span>}
+                        </div>
                       </div>
                       <div className="card-right">
                         {loaded ? (
                           <>
                             <div className="card-cur mono">{fmtPrice(s.effectivePrice, currency, CR)}</div>
-                            <div className="card-value mono">{fmtVal(s.cur, currency, CR)}</div>
-                            <div className={`card-pnl ${pos === true ? "pos" : pos === false ? "neg" : "neu"}`}>
-                              {s.pnl != null ? `${fmtPnl(s.pnl, currency, CR)} (${sgn(s.pnlPct)}${s.pnlPct?.toFixed(1)}%)` : "—"}
-                            </div>
+                            <div className="card-value mono">{fmtValX(s.cur, s.curKrw, currency)}</div>
+                            {(() => {
+                              const p = currency === "KRW" ? s.pnlKrw : s.pnl;
+                              const pp = currency === "KRW" ? s.pnlKrwPct : s.pnlPct;
+                              const sign = p == null ? null : p >= 0;
+                              return (
+                                <div className={`card-pnl ${sign === true ? "pos" : sign === false ? "neg" : "neu"}`}>
+                                  {p != null ? `${fmtPnlX(s.pnl, s.pnlKrw, currency)} (${sgn(pp)}${pp?.toFixed(1)}%)` : "—"}
+                                </div>
+                              );
+                            })()}
                             {(() => {
                               const dayPct = ms.status === "pre" ? s.preChgPct : ms.status === "after" ? s.afterChgPct : s.chgPct;
                               return dayPct != null ? (
@@ -1016,9 +1200,14 @@ export default function App() {
               <div className="list">
                 {tks.length === 0 ? (
                   <div className="empty"><div className="empty-icon">{Icon.chart}</div><div>종목을 추가하세요</div></div>
-                ) : tks.map((t) => {
-                  const s = statsMap[t], pnl = s?.pnl ?? 0, pnlPct = s?.pnlPct ?? 0, pos = pnl >= 0;
-                  const barW = Math.min(100, (Math.abs(pnl) / maxPnlAbs) * 100);
+                ) : <>
+                <FxBreakdown tot={tot} rate={fxData.rate} />
+                {tks.map((t) => {
+                  const s = statsMap[t];
+                  const pnl = (currency === "KRW" ? s?.pnlKrw : s?.pnl) ?? 0;
+                  const pnlPct = (currency === "KRW" ? s?.pnlKrwPct : s?.pnlPct) ?? 0;
+                  const pos = pnl >= 0;
+                  const barW = Math.min(100, (Math.abs(s?.pnl ?? 0) / maxPnlAbs) * 100);
                   return (
                     <div key={t} className="profit-row">
                       <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:8 }}>
@@ -1026,7 +1215,7 @@ export default function App() {
                         <div style={{ flex:1 }}>
                           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline" }}>
                             <span style={{ fontSize:15, fontWeight:700 }}>{t}</span>
-                            <span className={`mono ${pos ? "pos" : "neg"}`} style={{ fontSize:14, fontWeight:700 }}>{fmtPnl(pnl, currency, CR)}</span>
+                            <span className={`mono ${pos ? "pos" : "neg"}`} style={{ fontSize:14, fontWeight:700 }}>{fmtPnlX(s?.pnl, s?.pnlKrw, currency)}</span>
                           </div>
                           <div style={{ display:"flex", justifyContent:"space-between", marginTop:2 }}>
                             <span style={{ fontSize:11, color:"var(--muted)", fontWeight:500 }}>{s?.qty ?? 0}주</span>
@@ -1035,9 +1224,17 @@ export default function App() {
                         </div>
                       </div>
                       <div className="bar-bg"><div className="bar-fg" style={{ width:`${barW}%`, background: pos ? "var(--up)" : "var(--down)" }} /></div>
+                      {s?.fxSet && (
+                        <div className="pnl-split">
+                          <span>주가 <b className={(s.pnl ?? 0) >= 0 ? "pos" : "neg"}>{fmtKrwPnl(s.stockPnlKrw)}</b></span>
+                          <span>환차 <b className={(s.fxPnlKrw ?? 0) >= 0 ? "pos" : "neg"}>{fmtKrwPnl(s.fxPnlKrw)}</b></span>
+                          <span className="mono" style={{ color:"var(--muted2)" }}>매입 ₩{fmtRate(s.avgFx)}</span>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
+                </>}
               </div>
             )}
 
@@ -1223,7 +1420,12 @@ export default function App() {
                 <div className="lot-list">
                   {lots.map((l) => (
                     <div key={l.id} className="lot-row">
-                      <span style={{ color:"var(--muted)" }}>{l.qty}주 @ ${l.price.toFixed(2)}</span>
+                      <span style={{ color:"var(--muted)" }}>
+                        {l.qty}주 @ ${l.price.toFixed(2)}
+                        {validFx(l.fx) != null
+                          ? <span className="fx-tag">₩{fmtRate(l.fx)}</span>
+                          : <span className="fx-tag warn">환율 미입력</span>}
+                      </span>
                       <button className="lot-del" onClick={() => setLots((ls) => ls.filter((x) => x.id !== l.id))}>×</button>
                     </div>
                   ))}
@@ -1233,12 +1435,35 @@ export default function App() {
                 <div className="field"><label>수량</label><input className="fi mono" type="number" inputMode="decimal" placeholder="10" value={form.qty} onChange={(e) => setForm((f) => ({ ...f, qty: e.target.value }))} /></div>
                 <div className="field"><label>매입가 ($)</label><input className="fi mono" type="number" inputMode="decimal" placeholder="150.00" value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))} /></div>
               </div>
+              <div className="field">
+                <label>매입환율 (원/$) <span style={{ color:"var(--muted2)", fontWeight:500 }}>· 비우면 현재 {fmtRate(fxData.rate)}원</span></label>
+                <div className="fx-input-row">
+                  <input className="fi mono" type="number" inputMode="decimal" placeholder={fmtRate(fxData.rate)}
+                    value={form.fx} onChange={(e) => setForm((f) => ({ ...f, fx: e.target.value }))} />
+                  {lots.length > 0 && (
+                    <button className="fx-apply" onClick={applyFxToAll} disabled={!(parseFloat(form.fx) > 0)}>
+                      전체 적용
+                    </button>
+                  )}
+                </div>
+              </div>
               {preview.avg != null && (
                 <div className="avg-box">
                   <div className="avg-row"><span>평균단가</span><span className="mono">${preview.avg.toFixed(2)}</span></div>
                   <div className="avg-row"><span>총 수량</span><span className="mono">{preview.qty}주</span></div>
                   <div className="avg-row"><span>매입금액 ($)</span><span className="mono">${(preview.avg * preview.qty).toLocaleString("en-US",{maximumFractionDigits:2})}</span></div>
-                  <div className="avg-row"><span>매입금액 (₩)</span><span className="mono">₩{Math.round(preview.avg * preview.qty * fxData.rate).toLocaleString("ko-KR")}</span></div>
+                  <div className="avg-row"><span>평균 매입환율</span><span className="mono">₩{fmtRate(preview.avgFx)}</span></div>
+                  <div className="avg-row"><span>매입금액 (₩)</span><span className="mono">₩{Math.round(preview.costKrw).toLocaleString("ko-KR")}</span></div>
+                  {(() => {
+                    const fxPnl = preview.avg * preview.qty * (fxData.rate - (preview.avgFx ?? fxData.rate));
+                    if (Math.abs(fxPnl) < 1) return null;
+                    return (
+                      <div className="avg-row">
+                        <span>현재 환차손익</span>
+                        <span className={`mono ${fxPnl >= 0 ? "pos" : "neg"}`}>{fmtKrwPnl(fxPnl)}</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
               <button className="mb mb-s" style={{ marginTop:10 }} onClick={addLot}>+ 분할매수 추가</button>
